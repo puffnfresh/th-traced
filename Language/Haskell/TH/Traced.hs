@@ -1,6 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings                                     #-}
 module Language.Haskell.TH.Traced (QTrace, QState (..), tracing, tracing_, traced, unsafeLiftQ) where
+import           Control.Monad.Fail
 import           Control.Monad.State.Strict
 import           Data.Dynamic
 import           Data.IORef
@@ -23,7 +24,7 @@ data QState = QState { depFiles   :: [FilePath]
 --   and @'addModFinalizer'@. @'QTrace'@ also snatches @'getQ'@ and @'putQ'@,
 --   because these doesn't work till GHC 7.10.2.
 newtype QTrace a = QTrace { runQTrace :: StateT QState Q a
-                          } deriving (Monad, Functor, Applicative)
+                          } deriving (MonadFail, Monad, Functor, Applicative)
 
 qtLift :: (a -> Q b) -> a -> QTrace b
 qtLift = fmap (QTrace . lift)
@@ -45,10 +46,12 @@ instance Quasi QTrace where
     dic <- lift $ qRunIO $ readIORef th_trace_dic
     let x = fromDynamic =<< M.lookup (typeOf $ fromJust x) dic
     return x
+  qReifyFixity = qtLift qReifyFixity
   qReifyInstances = qtLift2 qReifyInstances
   qReifyRoles = qtLift qReifyRoles
   qReifyAnnotations = qtLift qReifyAnnotations
   qReifyModule = qtLift qReifyModule
+  qReifyConStrictness = qtLift qReifyConStrictness
   qLocation = QTrace $ lift qLocation
   qRunIO = qtLift qRunIO
   qAddDependentFile fp = QTrace $ do
@@ -60,6 +63,8 @@ instance Quasi QTrace where
   qAddModFinalizer f = QTrace $ do
     modify (\s -> s {finalizers = finalizers s ++ [f]})
     lift $ qAddModFinalizer f
+  qIsExtEnabled = qtLift qIsExtEnabled
+  qExtsEnabled = QTrace $ lift qExtsEnabled
 
 -- | Lift @'Q'@ computation to @'QTrace'@, with logging and snatching.
 traced :: Q a -> QTrace a
